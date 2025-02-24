@@ -1,0 +1,82 @@
+# Log ind på Azure
+Write-Host "Logger ind på Azure..."
+Connect-MgGraph -Scopes "AuditLog.Read.All", "Application.Read.All", "Directory.Read.All"
+
+# Indsæt dit App ID her
+$appId = "XXXX-XXXX-XXXX"  # ÆNDRE TIL RIGTIG APP ID!
+
+# Udvid tidsrammen (sidste 30 dage i stedet for 7 dage)
+$thirtyDaysAgo = (Get-Date).AddDays(-30).ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+Write-Host "Henter sign-ins for AppID ${appId} de sidste 30 dage..."
+
+# Hent alle sign-ins de sidste 30 dage
+$signIns = @()
+$moreResults = $true
+$skipToken = $null
+
+while ($moreResults) {
+    # Brug skipToken hvis det er nødvendigt for at hente næste side med resultater
+    if ($skipToken) {
+        $signInPage = Get-MgAuditLogSignIn -Filter "createdDateTime ge $thirtyDaysAgo" -Top 100 -SkipToken $skipToken
+    } else {
+        $signInPage = Get-MgAuditLogSignIn -Filter "createdDateTime ge $thirtyDaysAgo" -Top 100
+    }
+
+    # Tilføj de hentede resultater
+    $signIns += $signInPage
+
+    # Håndter pagination, hvis flere resultater findes
+    $skipToken = $signInPage.AdditionalData.'@odata.nextLink'
+    $moreResults = $skipToken -ne $null
+}
+
+# Hvis vi har sign-ins, udskriv dem
+if ($signIns.Count -gt 0) {
+    Write-Host "Sign-ins fundet i de sidste 30 dage:"
+    
+    # Udskriv hver sign-in med relevante detaljer
+    $signIns | ForEach-Object {
+        $user = $_.UserPrincipalName
+        $created = $_.CreatedDateTime
+        $ipAddress = $_.IPAddress
+        $status = $_.Status
+        $signInType = $_.SignInType
+        $appIdFromSignIn = $_.appId
+
+        Write-Host "SignInId: $($_.Id)"
+        Write-Host "User: $user"
+        Write-Host "Created: $created"
+        Write-Host "IP Address: $ipAddress"
+        Write-Host "Status: $status"
+        Write-Host "SignInType: $signInType"
+        Write-Host "AppId: $appIdFromSignIn"
+        Write-Host "----------------------------"
+    }
+
+    # Filtrér sign-ins for den specifikke appId
+    $appSignIns = $signIns | Where-Object { $_.appId -eq $appId }
+
+    if ($appSignIns.Count -gt 0) {
+        Write-Host "Sign-ins fundet for AppID ${appId}:"
+        
+        # Udskriv hver sign-in for denne app
+        $appSignIns | ForEach-Object {
+            $user = $_.UserPrincipalName
+            $created = $_.CreatedDateTime
+            $ipAddress = $_.IPAddress
+            $status = $_.Status
+            Write-Host "SignInId: $($_.Id)"
+            Write-Host "User: $user"
+            Write-Host "Created: $created"
+            Write-Host "IP Address: $ipAddress"
+            Write-Host "Status: $status"
+            Write-Host "----------------------------"
+        }
+    } else {
+        Write-Host "Ingen sign-ins fundet for AppID ${appId}"
+    }
+
+} else {
+    Write-Host "Ingen sign-ins fundet for de sidste 30 dage."
+}
