@@ -1,0 +1,97 @@
+# Log ind på Azure
+Write-Host "Logger ind på Azure..."
+Connect-MgGraph -Scopes "AuditLog.Read.All", "Application.Read.All", "Directory.Read.All"
+
+# Hent AppId'er fra 'test.txt' filen på skrivebordet
+$desktopPath = [System.Environment]::GetFolderPath('Desktop')
+$txtFilePath = "$desktopPath\test.txt"
+
+# Læs AppId'er fra filen (én per linje)
+if (Test-Path $txtFilePath) {
+    $appIds = Get-Content $txtFilePath
+} else {
+    Write-Host "Filen 'test.txt' blev ikke fundet på skrivebordet. Sørg for, at den eksisterer."
+    exit
+}
+
+# Udvid tidsrammen (sidste 30 dage i stedet for 7 dage)
+$thirtyDaysAgo = (Get-Date).AddDays(-30).ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+# Opret en tom liste til at gemme alle resultater
+$allResults = @()
+
+# Definer batch-størrelsen til 10
+$batchSize = 10  # Batch-størrelse sat til 10
+
+# Beregn hvor mange batches vi har
+$totalBatches = [math]::Ceiling($appIds.Count / $batchSize)
+
+# Gennemfør sign-in henteprocessen i batches
+for ($i = 0; $i -lt $appIds.Count; $i += $batchSize) {
+    # Hent en batch af AppId'er
+    $batch = $appIds[$i..[Math]::Min($i + $batchSize - 1, $appIds.Count - 1)]
+    
+    # Beregn batch nummeret
+    $batchNumber = [math]::Ceiling(($i + 1) / $batchSize)
+
+    Write-Host "`nBehandler batch $batchNumber/$totalBatches af AppId'er: $($batch -join ', ')"
+
+    foreach ($appId in $batch) {
+        Write-Host "`nHenter sign-ins for AppID ${appId} de sidste 30 dage..."
+
+        # Hent alle sign-ins de sidste 30 dage
+        $signIns = @()
+        $moreResults = $true
+        $skipToken = $null
+
+        while ($moreResults) {
+            # Brug skipToken hvis det er nødvendigt for at hente næste side med resultater
+            if ($skipToken) {
+                $signInPage = Get-MgAuditLogSignIn -Filter "createdDateTime ge $thirtyDaysAgo" -Top 100 -SkipToken $skipToken
+            } else {
+                $signInPage = Get-MgAuditLogSignIn -Filter "createdDateTime ge $thirtyDaysAgo" -Top 100
+            }
+
+            # Tilføj de hentede resultater
+            $signIns += $signInPage
+
+            # Håndter pagination, hvis flere resultater findes
+            $skipToken = $signInPage.AdditionalData.'@odata.nextLink'
+            $moreResults = $skipToken -ne $null
+        }
+
+        # Hvis vi har sign-ins, saml alle SignInId i en lang streng
+        if ($signIns.Count -gt 0) {
+            Write-Host "Sign-ins fundet i de sidste 30 dage for AppId: ${appId}"
+
+            # Saml alle SignInId i en lang streng, adskilt med komma
+            $signInIds = ($signIns | ForEach-Object { $_.Id }) -join ", "
+
+            # Opret en objekt for denne AppId og dens SignInIds
+            $outputObject = [PSCustomObject]@{
+                AppId      = $appId
+                SignInIds  = $signInIds
+            }
+
+            # Tilføj objektet til listen
+            $allResults += $outputObject
+        } else {
+            Write-Host "Ingen sign-ins fundet for AppId ${appId}."
+        }
+    }
+
+    # Pause i 2 sekunder efter at have behandlet en batch (juster tid hvis nødvendigt)
+    Write-Host "Batch $batchNumber/$totalBatches færdig. Pauser i 2 sekunder..."
+    Start-Sleep -Seconds 2
+}
+
+# Hvis vi har resultater, gem dem i en samlet CSV-fil
+if ($allResults.Count -gt 0) {
+    # Gem resultatet i CSV fil på skrivebordet
+    $csvFilePath = "$desktopPath\all_signins.csv"
+    $allResults | Export-Csv -Path $csvFilePath -NoTypeInformation -Force
+
+    Write-Host "`nAlle sign-in IDs er blevet gemt i filen: $csvFilePath"
+} else {
+    Write-Host "Ingen sign-ins blev fundet for de angivne AppId'er."
+}
