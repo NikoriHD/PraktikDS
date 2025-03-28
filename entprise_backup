@@ -1,0 +1,53 @@
+# Tjekker om der allerede er en aktiv Azure AD-forbindelse
+try {
+    $AzureADSession = Get-AzureADTenantDetail -ErrorAction Stop
+    Write-Host "Allerede logget ind på Azure AD."
+} catch {
+    Write-Host "Log ind på Azure AD..."
+    Connect-AzureAD
+}
+
+# Find brugerens skrivebord
+$DesktopPath = [System.Environment]::GetFolderPath("Desktop")
+
+# Angiv stien til tekstfilen med AppId'er på skrivebordet
+$AppIdsFile = "$DesktopPath\appid.txt"  # Filen ligger på skrivebordet
+
+# Filen, hvor alle backups skal gemmes
+$BackupFile = "$DesktopPath\AzureAD_Backup_Summary.txt"
+
+# Hvis backup-filen allerede eksisterer, skal den slettes før vi skriver nye data
+if (Test-Path -Path $BackupFile) {
+    Remove-Item -Path $BackupFile
+}
+
+# Læs AppId'er fra tekstfilen
+$AppIds = Get-Content -Path $AppIdsFile
+
+# Behandle hver AppId
+foreach ($AppId in $AppIds) {
+    Write-Host "Behandler AppId: $AppId"
+
+    # Forsøg at hente applikationen som ServicePrincipal
+    $App = Get-AzureADServicePrincipal -Filter "AppId eq '$AppId'"
+
+    # Hvis applikationen ikke findes som ServicePrincipal, prøv at hente som Application
+    if (-not $App) {
+        Write-Host "Ingen ServicePrincipal fundet, prøver at hente som Application..."
+        $App = Get-AzureADApplication -Filter "AppId eq '$AppId'"
+    }
+
+    if ($App) {
+        # Gem applikationens detaljer i den samlede backupfil
+        $App | Format-List * | Out-File -FilePath $BackupFile -Append
+
+        Write-Host "Backup gemt i samlet fil: $BackupFile"
+
+        # Tilføj separator med 30 bindestreger til backupfilen
+        Add-Content -Path $BackupFile -Value ("-" * 30)  # 30 bindestreger som separator
+    } else {
+        Write-Host "Fejl: Ingen applikation fundet med AppId: $AppId"
+    }
+}
+
+Write-Host "Alle backups er gemt i den samlede fil: $BackupFile"
